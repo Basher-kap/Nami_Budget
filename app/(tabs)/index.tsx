@@ -1,682 +1,297 @@
-import { Text, View, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Alert } from "react-native";
-import { Link, useFocusEffect } from "expo-router";
-import { useState, useCallback } from "react";
-import { Ionicons } from "@expo/vector-icons";
-import { PieChart, BarChart } from "react-native-gifted-charts";
-import { storage } from "@/utils/storage";
+import React, { useCallback, useMemo, useState } from 'react';
+import {
+  ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { BarChart, LineChart, PieChart } from 'react-native-gifted-charts';
+import { CHART_COLORS, COLORS, cardShadow } from '@/constants/theme';
+import { useBudget } from '@/context/BudgetContext';
+import { allocatedOf, childrenOf, getRoot, round2, spentByWallet, totalSpent } from '@/utils/budget';
+import { dayKey, peso, shortDay } from '@/utils/format';
+import { exportToExcel, pickExcel } from '@/utils/files';
 
-// --- Data Types ---
-type Category = { id: string; name: string; deposit: number; balance: number };
-type ExpenseType = { id: string; name: string; amount: number; categoryName: string; date: string };
-type DepositType = { id: string; categoryName: string; amount: number; date: string };
-
-// Nami's color palette - Orange hair, Blue eyes, Tangerine theme
-const COLORS = ['#FF8C42', '#4A90E2', '#FF6B35', '#FFA94D', '#5BA3E8', '#FFB366'];
-const NAMI_PRIMARY = '#FF8C42'; // Tangerine orange
-const NAMI_SECONDARY = '#4A90E2'; // Ocean blue
-const NAMI_ACCENT = '#FF6B35'; // Deep orange
-const NAMI_LIGHT = '#FFF4E6'; // Soft cream
-const NAMI_DARK = '#2C3E50'; // Deep navy
+const LINE_DAYS = 30;
 
 export default function Dashboard() {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseType[]>([]);
-  const [deposits, setDeposits] = useState<DepositType[]>([]);
-  const [totalBalance, setTotalBalance] = useState(0);
-  const [totalDeposits, setTotalDeposits] = useState(0);
-  const [totalExpenses, setTotalExpenses] = useState(0);
+  const router = useRouter();
+  const { width } = useWindowDimensions();
+  const { state, ready, replaceAll, resetAll } = useBudget();
+  const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const chartWidth = width - 32 - 40 - 40; // screen − section margin − padding − y-axis space
 
-  // --- Load from Local Storage ---
-  const loadData = async () => {
-    try {
-      const savedCategories = await storage.getItem<Category[]>("categories");
-      const savedExpenses = await storage.getItem<ExpenseType[]>("expenses");
-      const savedDeposits = await storage.getItem<DepositType[]>("deposits");
+  const root = getRoot(state);
+  const topLevel = root ? childrenOf(state.nodes, root.id) : [];
+  const spentMap = useMemo(() => spentByWallet(state), [state]);
+  const colorOf = useMemo(() => {
+    const m: Record<string, string> = {};
+    // order: children first, then sub-children under each, for stable legend colours
+    state.nodes.filter((n) => n.parentId !== null).forEach((n, i) => (m[n.id] = CHART_COLORS[i % CHART_COLORS.length]));
+    return m;
+  }, [state.nodes]);
 
-      if (savedCategories) {
-        setCategories(savedCategories);
-        const balance = savedCategories.reduce((sum, cat) => sum + cat.balance, 0);
-        setTotalBalance(balance);
+  // ---- Cards ----
+  const total = root?.amount ?? 0;
+  const allocated = root ? allocatedOf(state.nodes, root.id) : 0;
+  const unallocated = round2(total - allocated);
+  const spent = totalSpent(state);
+  const topSpender = Object.entries(spentMap).sort((a, b) => b[1] - a[1])[0];
+  const topSpenderName = topSpender ? state.transactions.find((t) => t.walletId === topSpender[0])?.walletName ?? '—' : '—';
+
+  // ---- Pie: wallet amounts vs Total Budget ----
+  const pieSlices = [
+    ...topLevel.filter((n) => n.amount > 0).map((n) => ({ label: n.name, value: n.amount, color: colorOf[n.id] })),
+    ...(unallocated > 0 ? [{ label: 'Unallocated', value: unallocated, color: COLORS.unallocated }] : []),
+  ];
+  const pieData = pieSlices.map((s) => ({
+    value: s.value, color: s.color, text: total > 0 ? `${Math.round((s.value / total) * 100)}%` : '',
+  }));
+
+  // ---- Line: daily spending for the last 30 days ----
+  const lineData = useMemo(() => {
+    const perDay: Record<string, number> = {};
+    state.transactions.forEach((t) => {
+      if (t.type === 'expense') {
+        const k = dayKey(new Date(t.date));
+        perDay[k] = (perDay[k] ?? 0) + t.amount;
       }
-
-      if (savedExpenses) {
-        setExpenses(savedExpenses);
-        const expenseSum = savedExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-        setTotalExpenses(expenseSum);
-      }
-
-      if (savedDeposits) {
-        setDeposits(savedDeposits);
-        const depositSum = savedDeposits.reduce((sum, dep) => sum + dep.amount, 0);
-        setTotalDeposits(depositSum);
-      }
-    } catch (error) {
-      console.error("Error loading data:", error);
-    }
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
-  };
-
-  // --- Reset All Data ---
-  const handleResetData = () => {
-    Alert.alert(
-      "🚨 Reset All Data",
-      "Are you sure you want to delete ALL your treasure data? This will clear all categories, expenses, and deposits across the entire app. This action cannot be undone!",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        {
-          text: "Yes, Delete Everything",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              // Clear all data from storage
-              await storage.multiRemove(['categories', 'expenses', 'deposits']);
-              
-              // Reset all local state
-              setCategories([]);
-              setExpenses([]);
-              setDeposits([]);
-              setTotalBalance(0);
-              setTotalDeposits(0);
-              setTotalExpenses(0);
-              
-              Alert.alert(
-                "✅ Success", 
-                "All data has been cleared! The changes will reflect across all screens.",
-                [{ text: "OK" }]
-              );
-            } catch (error) {
-              console.error("Error resetting data:", error);
-              Alert.alert("❌ Error", "Failed to reset data. Please try again.");
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  // --- Prepare Pie Chart Data ---
-  const getPieData = () => {
-    if (categories.length === 0) return [];
-    
-    return categories.map((cat, index) => ({
-      value: cat.balance,
-      color: COLORS[index % COLORS.length],
-      text: cat.name,
-    }));
-  };
-
-  // --- Prepare Bar Chart Data ---
-  const getBarData = () => {
-    const timeline: { [key: string]: number } = {};
-    expenses.forEach(exp => {
-      const date = exp.date;
-      timeline[date] = (timeline[date] || 0) + exp.amount;
     });
-
-    // Get the number of days in the current month
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-    const sorted = Object.entries(timeline)
-      .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
-      .slice(-daysInMonth); // Show days based on current month
-
-    if (sorted.length === 0) return [];
-
-    return sorted.map(([date, amount]) => ({
-      value: amount,
-      label: date.split("/").slice(0, 2).join("/"),
-      frontColor: NAMI_PRIMARY,
-    }));
-  };
-
-  const pieData = getPieData();
-  const barData = getBarData();
-
-  const biggestCategory = categories.reduce(
-    (max, cat) =>
-      cat.deposit - cat.balance >
-      ((max?.deposit || 0) - (max?.balance || 0))
-        ? cat
-        : max,
-    categories[0] || null
-  );
-
-  // --- Render Pie Chart ---
-  const renderPieChart = () => {
-    if (pieData.length === 0) {
-      return <Text style={styles.noData}>No treasures yet! Start tracking your berries! 🍊</Text>;
+    const out: { value: number; label: string }[] = [];
+    for (let i = LINE_DAYS - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      out.push({ value: round2(perDay[dayKey(d)] ?? 0), label: i % 5 === 0 || i === 0 ? shortDay(d) : '' });
     }
+    return out;
+  }, [state.transactions]);
+  const hasSpending = spent > 0;
+  const lineMax = Math.max(...lineData.map((d) => d.value), 1);
 
-    return (
-      <View style={styles.pieContainer}>
-        <PieChart
-          data={pieData}
-          radius={100}
-          innerRadius={50}
-          donut
-          showText
-          textColor="#fff"
-          textSize={11}
-          focusOnPress
-          centerLabelComponent={() => (
-            <View style={styles.centerLabel}>
-              <Text style={styles.centerLabelEmoji}>🍊</Text>
-              <Text style={styles.centerLabelText}>Total</Text>
-              <Text style={styles.centerLabelValue}>₱{totalBalance.toFixed(0)}</Text>
-            </View>
-          )}
-        />
-        <View style={styles.legend}>
-          {pieData.map((item, index) => (
-            <View key={index} style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: item.color }]} />
-              <Text style={styles.legendText}>
-                {item.text} (₱{item.value.toFixed(0)})
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
+  // ---- Clustered bars: each child wallet = a cluster; its own spending + each sub-wallet ----
+  const BAR_W = 22;
+  const barData = useMemo(() => {
+    const items: any[] = [];
+    topLevel.forEach((c) => {
+      const members = [
+        { id: c.id, value: spentMap[c.id] ?? 0 },
+        ...childrenOf(state.nodes, c.id).map((s) => ({ id: s.id, value: spentMap[s.id] ?? 0 })),
+      ];
+      const groupWidth = members.length * BAR_W + (members.length - 1) * 4;
+      members.forEach((m, i) => {
+        items.push({
+          value: m.value,
+          frontColor: colorOf[m.id],
+          spacing: i === members.length - 1 ? 28 : 4,
+          ...(i === 0
+            ? { label: c.name.length > 12 ? c.name.slice(0, 11) + '…' : c.name, labelWidth: Math.max(groupWidth, 56), labelTextStyle: { color: COLORS.navy, fontSize: 10, textAlign: 'center' as const } }
+            : {}),
+          topLabelComponent: () => (m.value > 0 ? <Text style={styles.barTop}>{Math.round(m.value)}</Text> : null),
+        });
+      });
+    });
+    return items;
+  }, [state.nodes, spentMap, colorOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  const barMax = Math.max(...Object.values(spentMap), 1) * 1.15;
+
+  // ---- Actions ----
+  const onExport = async () => {
+    if (!root) return Alert.alert('Nothing to export', 'Set up your Total Budget first.');
+    try { setBusy(true); await exportToExcel(state); }
+    catch (e) { Alert.alert('Export failed', e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
-
-  // --- Render Bar Chart ---
-  const renderBarChart = () => {
-    if (barData.length === 0) {
-      return <Text style={styles.noData}>No adventure logs yet. Start your treasure hunt! ⚓</Text>;
-    }
-
-    const maxValue = Math.max(...barData.map(d => d.value));
-    const chartWidth = Math.max(280, barData.length * 40);
-
-    return (
-      <View style={styles.barChartContainer}>
-        <View style={styles.scrollableChartWrapper}>
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={true}
-            persistentScrollbar={true}
-            contentContainerStyle={styles.barChartScroll}
-          >
-            <BarChart
-              data={barData}
-              width={chartWidth}
-              height={200}
-              barWidth={24}
-              spacing={barData.length > 15 ? 8 : 12}
-              roundedTop
-              barBorderRadius={4}
-              yAxisThickness={0}
-              xAxisThickness={1}
-              xAxisColor="#FFD4A3"
-              hideRules
-              frontColor={NAMI_PRIMARY}
-              yAxisTextStyle={{ color: '#FF8C42', fontSize: 10, fontWeight: '600' }}
-              xAxisLabelTextStyle={{ color: '#95a5a6', fontSize: 8 }}
-              noOfSections={4}
-              maxValue={maxValue * 1.1}
-              showValuesAsTopLabel
-              topLabelTextStyle={{ fontSize: 9, color: '#FF6B35', fontWeight: '700' }}
-              scrollToEnd={true}
-              scrollAnimation={true}
-            />
-          </ScrollView>
-        </View>
-        <Text style={styles.chartSubtext}>
-          ⚡ Average daily spending: ₱{(totalExpenses / (barData.length || 1)).toFixed(2)}
-        </Text>
-      </View>
-    );
+  const onImport = async () => {
+    try {
+      setBusy(true);
+      const imported = await pickExcel();
+      if (!imported) return;
+      Alert.alert(
+        'Replace all data?',
+        `This file has ${imported.nodes.length} wallet(s) and ${imported.transactions.length} transaction(s). Your current data will be replaced.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Import', style: 'destructive', onPress: () => { replaceAll(imported); Alert.alert('Imported', 'Your data has been restored.'); } },
+        ]
+      );
+    } catch (e) {
+      Alert.alert('Import failed', e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
   };
+  const onReset = () =>
+    Alert.alert('🚨 Reset all data', 'Delete your Total Budget, all wallets and history? This cannot be undone. Tip: export first!', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete everything', style: 'destructive', onPress: resetAll },
+    ]);
+  const onRefresh = useCallback(async () => { setRefreshing(true); setTimeout(() => setRefreshing(false), 400); }, []);
+
+  if (!ready) return <View style={styles.center}><ActivityIndicator color={COLORS.primary} size="large" /></View>;
 
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={
-        <RefreshControl 
-          refreshing={refreshing} 
-          onRefresh={onRefresh}
-          tintColor={NAMI_PRIMARY}
-          colors={[NAMI_PRIMARY]}
-        />
-      }
-    >
-      {/* Header - Nami themed */}
+    <ScrollView style={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}>
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>🍊 Nami's Treasure Log</Text>
-          <Text style={styles.headerSubtitle}>Navigator's Budget Dashboard</Text>
-          <Text style={styles.headerSubtitle2}>- navigate your finance unlike my idiot captain!!!</Text>
-        </View>
+        <Text style={styles.title}>🍊 Nami Budget</Text>
+        <Text style={styles.subtitle}>{"Navigator's treasure dashboard"}</Text>
         <View style={styles.headerButtons}>
-          <Link href="/budget" style={styles.link}>
-            <View style={styles.linkButton}>
-              <Text style={styles.linkText}>Full Budget</Text>
-              <Ionicons name="arrow-forward" size={16} color="#fff" />
-            </View>
-          </Link>
-          <TouchableOpacity onPress={handleResetData} style={styles.resetButton}>
-            <Ionicons name="trash-outline" size={16} color="#fff" />
-            <Text style={styles.resetText}>Reset Data</Text>
+          <HeaderBtn icon="share-outline" label="Export" onPress={onExport} />
+          <HeaderBtn icon="download-outline" label="Import" onPress={onImport} />
+          <HeaderBtn icon="trash-outline" label="Reset" onPress={onReset} danger />
+        </View>
+        {busy && <ActivityIndicator color="#fff" style={{ marginTop: 8 }} />}
+      </View>
+
+      {!root ? (
+        <View style={[styles.section, { alignItems: 'center' }]}>
+          <Text style={{ fontSize: 44 }}>🗺️</Text>
+          <Text style={styles.sectionTitle}>No treasure map yet</Text>
+          <Text style={[styles.sectionSub, { textAlign: 'center', marginVertical: 8 }]}>Set your Total Budget in the Budget tab, or import an Excel backup.</Text>
+          <TouchableOpacity style={styles.cta} onPress={() => router.push('/budget')}>
+            <Text style={styles.ctaText}>Go to Budget</Text>
           </TouchableOpacity>
         </View>
-      </View>
-
-      {/* Summary Cards */}
-      <View style={styles.cardContainer}>
-        <View style={[styles.card, styles.balanceCard]}>
-          <View style={styles.cardIconCircle}>
-            <Ionicons name="wallet" size={24} color="#FF8C42" />
+      ) : (
+        <>
+          <View style={styles.cards}>
+            <Card icon="wallet" label="Total Budget" value={peso(total)} bg="#FFF4E6" tint={COLORS.primary} />
+            <Card icon="git-branch" label="In Wallets" value={peso(allocated)} bg="#E8F4FF" tint={COLORS.blue} />
+            <Card icon="cart" label="Total Spent" value={peso(spent)} bg="#FFE8E0" tint={COLORS.accent} />
+            <Card icon="cash" label="Unallocated" value={peso(unallocated)} bg="#EAF7EE" tint={COLORS.success} />
+            <Card icon="trophy" label="Biggest Splurge" value={topSpender ? `${topSpenderName} • ${peso(topSpender[1])}` : '—'} bg="#FFF0E0" tint="#FFA94D" wide />
           </View>
-          <Text style={styles.cardLabel}>Total Berries (Balance)</Text>
-          <Text style={styles.cardValue}>₱{totalBalance.toFixed(2)}</Text>
-          <View style={styles.cardWave} />
-        </View>
 
-        <View style={[styles.card, styles.depositCard]}>
-          <View style={styles.cardIconCircle}>
-            <Ionicons name="trending-up" size={24} color="#4A90E2" />
-          </View>
-          <Text style={styles.cardLabel}>Treasure Gained (Deposits)</Text>
-          <Text style={styles.cardValue}>₱{totalDeposits.toFixed(2)}</Text>
-          <View style={styles.cardWave} />
-        </View>
-
-        <View style={[styles.card, styles.expenseCard]}>
-          <View style={styles.cardIconCircle}>
-            <Ionicons name="cart" size={24} color="#FF6B35" />
-          </View>
-          <Text style={styles.cardLabel}>Shopping Spent (Expenses)</Text>
-          <Text style={styles.cardValue}>₱{totalExpenses.toFixed(2)}</Text>
-          <View style={styles.cardWave} />
-        </View>
-
-        <View style={[styles.card, styles.categoryCard]}>
-          <View style={styles.cardIconCircle}>
-            <Ionicons name="trophy" size={24} color="#FFA94D" />
-          </View>
-          <Text style={styles.cardLabel}>Biggest Splurge (Most spent)</Text>
-          <Text style={styles.cardValue}>{biggestCategory?.name || "None"}</Text>
-          <Text style={styles.cardSubtext}>
-            ₱{((biggestCategory?.deposit || 0) - (biggestCategory?.balance || 0)).toFixed(2)}
-          </Text>
-          <View style={styles.cardWave} />
-        </View>
-      </View>
-
-      {/* Pie Chart */}
-      <View style={styles.chartSection}>
-        <View style={styles.chartHeader}>
-          <Text style={styles.chartTitle}>🍊 Treasure Map Distribution</Text>
-          <Text style={styles.chartSubheading}>Where your total balance distributed by budgets </Text>
-        </View>
-        {renderPieChart()}
-      </View>
-
-      {/* Bar Chart */}
-      <View style={styles.chartSection}>
-        <View style={styles.chartHeader}>
-          <Text style={styles.chartTitle}>⚓ Adventure Log (This Month)</Text>
-          <Text style={styles.chartSubheading}>Your spending voyage timeline for the current month</Text>
-        </View>
-        {renderBarChart()}
-      </View>
-
-      {/* Progress Bars */}
-      <View style={styles.chartSection}>
-        <View style={styles.chartHeader}>
-          <Text style={styles.chartTitle}>⚡ Power Level by Category</Text>
-          <Text style={styles.chartSubheading}>How much money you've spent in each budget</Text>
-        </View>
-        {categories.length > 0 ? (
-          <View style={styles.progressContainer}>
-            {categories.map(cat => {
-              const used = cat.deposit - cat.balance;
-              const percentage = (used / cat.deposit) * 100;
-              const color =
-                percentage > 80 ? "#FF6B35" : percentage > 50 ? "#FFA94D" : "#4A90E2";
-              return (
-                <View key={cat.id} style={styles.progressItem}>
-                  <View style={styles.progressHeader}>
-                    <Text style={styles.progressLabel}>🌊 {cat.name}</Text>
-                    <Text style={styles.progressValue}>
-                      ₱{used.toFixed(0)} / ₱{cat.deposit.toFixed(0)}
-                    </Text>
-                  </View>
-                  <View style={styles.progressBarBg}>
-                    <View
-                      style={[
-                        styles.progressBarFill,
-                        { width: `${Math.min(percentage, 100)}%`, backgroundColor: color },
-                      ]}
-                    />
-                  </View>
-                  <Text style={[styles.progressPercent, { color }]}>
-                    {percentage.toFixed(1)}% of treasure used
-                  </Text>
+          <Section title="🍊 Treasure Distribution" sub="How your Total Budget is split across wallets">
+            {pieData.length === 0 ? <Empty text="Create wallets to see the split." /> : (
+              <View style={{ alignItems: 'center' }}>
+                <PieChart
+                  data={pieData} donut radius={100} innerRadius={55} showText textColor="#fff" textSize={11} focusOnPress
+                  centerLabelComponent={() => (
+                    <View style={{ alignItems: 'center' }}>
+                      <Text style={{ fontSize: 11, color: COLORS.muted }}>Total</Text>
+                      <Text style={{ fontSize: 15, fontWeight: '900', color: COLORS.accent }}>{peso(total)}</Text>
+                    </View>
+                  )}
+                />
+                <View style={styles.legend}>
+                  {pieSlices.map((s) => (
+                    <View key={s.label} style={styles.legendItem}>
+                      <View style={[styles.dot, { backgroundColor: s.color }]} />
+                      <Text style={styles.legendText}>{s.label} ({peso(s.value)})</Text>
+                    </View>
+                  ))}
                 </View>
-              );
-            })}
-          </View>
-        ) : (
-          <Text style={styles.noData}>No categories yet. Chart your course! 🗺️</Text>
-        )}
-      </View>
+              </View>
+            )}
+          </Section>
 
-      {/* Fun Nami Quote */}
-      <View style={styles.quoteSection}>
-        <Text style={styles.quoteText}>"Look at you guys go! Meanwhile, I'll be collecting some treasure."</Text>
-        <Text style={styles.quoteAuthor}>— Nami, Navigator 🍊</Text>
+          <Section title="⚓ Daily Spending" sub={`Expenses per day, last ${LINE_DAYS} days`}>
+            {!hasSpending ? <Empty text="No expenses logged yet." /> : (
+              <>
+                <LineChart
+                  data={lineData} width={chartWidth} height={190} spacing={Math.max(10, chartWidth / (LINE_DAYS - 1))} initialSpacing={8} endSpacing={8}
+                  color={COLORS.primary} thickness={3} curved areaChart startFillColor={COLORS.primary} endFillColor={COLORS.cream}
+                  startOpacity={0.4} endOpacity={0.05} dataPointsColor={COLORS.accent} dataPointsRadius={3}
+                  noOfSections={4} maxValue={lineMax * 1.15} hideRules yAxisThickness={0} xAxisColor={COLORS.border}
+                  yAxisTextStyle={{ color: COLORS.primary, fontSize: 9 }} xAxisLabelTextStyle={{ color: COLORS.muted, fontSize: 8, width: 36 }}
+                  yAxisLabelPrefix="₱"
+                />
+                <Text style={styles.avg}>Average per day: {peso(spent / Math.max(1, new Set(state.transactions.filter((t) => t.type === 'expense').map((t) => dayKey(new Date(t.date)))).size))} (days with spending)</Text>
+              </>
+            )}
+          </Section>
+
+          <Section title="⚡ Spending by Wallet" sub="Each cluster is a child wallet; its bars are itself + its sub-wallets">
+            {topLevel.length === 0 ? <Empty text="Create wallets to compare spending." /> : (
+              <>
+                <ScrollView horizontal showsHorizontalScrollIndicator>
+                  <BarChart
+                    data={barData} barWidth={BAR_W} initialSpacing={12} height={190} noOfSections={4} maxValue={barMax}
+                    barBorderRadius={5} hideRules yAxisThickness={0} xAxisColor={COLORS.border} isAnimated={false}
+                    yAxisTextStyle={{ color: COLORS.primary, fontSize: 9 }} yAxisLabelPrefix="₱"
+                    width={Math.max(chartWidth, barData.length * 30 + 40)}
+                  />
+                </ScrollView>
+                <View style={styles.legend}>
+                  {state.nodes.filter((n) => n.parentId !== null).map((n) => (
+                    <View key={n.id} style={styles.legendItem}>
+                      <View style={[styles.dot, { backgroundColor: colorOf[n.id] }]} />
+                      <Text style={styles.legendText}>{n.name}{state.nodes.find((p) => p.id === n.parentId)?.parentId ? ' (sub)' : ''}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+          </Section>
+        </>
+      )}
+
+      <View style={styles.quote}>
+        <Text style={styles.quoteText}>{"“Look at you guys go! Meanwhile, I'll be collecting some treasure.”"}</Text>
+        <Text style={styles.quoteBy}>— Nami, Navigator 🍊</Text>
       </View>
     </ScrollView>
   );
 }
 
-// --- Styles ---
+function Card({ icon, label, value, bg, tint, wide }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string; bg: string; tint: string; wide?: boolean }) {
+  return (
+    <View style={[styles.card, { backgroundColor: bg }, wide && { width: '100%' }]}>
+      <View style={styles.iconCircle}><Ionicons name={icon} size={22} color={tint} /></View>
+      <Text style={styles.cardLabel}>{label}</Text>
+      <Text style={styles.cardValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    </View>
+  );
+}
+
+function Section({ title, sub, children }: { title: string; sub: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSub}>{sub}</Text>
+      <View style={{ marginTop: 14 }}>{children}</View>
+    </View>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <Text style={styles.noData}>{text}</Text>;
+}
+
+function HeaderBtn({ icon, label, onPress, danger }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void; danger?: boolean }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={[styles.hBtn, danger && { backgroundColor: 'rgba(231,76,60,0.9)' }]}>
+      <Ionicons name={icon} size={16} color="#fff" />
+      <Text style={styles.hBtnText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#FFF8F0',
-  },
-  header: {
-    backgroundColor: NAMI_PRIMARY,
-    padding: 20,
-    paddingTop: 40,
-    paddingBottom: 25,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
-    shadowColor: "#FF8C42",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  headerTop: {
-    marginBottom: 15,
-  },
-  headerTitle: { 
-    fontSize: 28, 
-    fontWeight: "bold", 
-    color: "#fff",
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: '#FFF4E6',
-    marginTop: 4,
-    opacity: 0.95,
-    fontStyle: 'italic',
-  },  
-  headerSubtitle2: {
-    fontSize: 11,
-    color: '#FFF4E6',
-    marginTop: 4,
-    opacity: 0.95,
-    fontStyle: 'italic',
-  },
-  headerButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  link: { flex: 1 },
-  linkButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#fff',
-    justifyContent: 'center',
-  },
-  resetButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 107, 53, 0.9)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#fff',
-    gap: 6,
-  },
-  resetText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  linkText: { 
-    color: "#fff", 
-    fontSize: 14, 
-    fontWeight: "700",
-    marginRight: 6,
-  },
-  cardContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    padding: 15,
-    justifyContent: "space-between",
-    marginTop: -15,
-  },
-  card: {
-    width: "48%",
-    borderRadius: 20,
-    padding: 18,
-    marginBottom: 15,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 6,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  cardIconCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  balanceCard: { backgroundColor: "#FFF4E6" },
-  depositCard: { backgroundColor: "#E8F4FF" },
-  expenseCard: { backgroundColor: "#FFE8E0" },
-  categoryCard: { backgroundColor: "#FFF0E0" },
-  cardLabel: { 
-    color: NAMI_DARK, 
-    fontSize: 11, 
-    marginTop: 4,
-    fontWeight: '600',
-    opacity: 0.8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  cardValue: { 
-    color: NAMI_DARK, 
-    fontSize: 22, 
-    fontWeight: "900", 
-    marginTop: 6,
-  },
-  cardSubtext: { 
-    color: NAMI_DARK, 
-    fontSize: 11, 
-    marginTop: 4, 
-    opacity: 0.7,
-    fontWeight: '600',
-  },
-  cardWave: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 140, 66, 0.1)',
-    transform: [{ translateX: 40 }, { translateY: 40 }],
-  },
-  chartSection: {
-    backgroundColor: "#fff",
-    margin: 15,
-    marginTop: 10,
-    padding: 20,
-    borderRadius: 20,
-    elevation: 4,
-    shadowColor: "#FF8C42",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    borderWidth: 2,
-    borderColor: '#FFF4E6',
-  },
-  chartHeader: {
-    marginBottom: 20,
-    paddingBottom: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: '#FFE8D6',
-  },
-  chartTitle: { 
-    fontSize: 18, 
-    fontWeight: "800", 
-    color: NAMI_PRIMARY,
-    letterSpacing: 0.3,
-  },
-  chartSubheading: {
-    fontSize: 12,
-    color: '#95a5a6',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  barChartScroll: { 
-    paddingHorizontal: 10,
-    alignItems: 'center',
-  },
-  scrollableChartWrapper: {
-    width: '100%',
-    height: 230,
-  },
-  noData: {
-    textAlign: "center",
-    color: "#95a5a6",
-    fontSize: 14,
-    paddingVertical: 30,
-    fontStyle: "italic",
-  },
-  pieContainer: { alignItems: "center", paddingVertical: 10 },
-  centerLabel: { alignItems: "center", justifyContent: "center" },
-  centerLabelEmoji: { fontSize: 24, marginBottom: 4 },
-  centerLabelText: { fontSize: 11, color: "#95a5a6", fontWeight: '600' },
-  centerLabelValue: { fontSize: 18, fontWeight: "900", color: NAMI_PRIMARY, marginTop: 2 },
-  legend: { 
-    flexDirection: "row", 
-    flexWrap: "wrap", 
-    justifyContent: "center", 
-    marginTop: 20,
-    paddingHorizontal: 10,
-  },
-  legendItem: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    marginRight: 12, 
-    marginBottom: 10,
-    minWidth: "45%",
-  },
-  legendDot: { 
-    width: 14, 
-    height: 14, 
-    borderRadius: 7, 
-    marginRight: 8,
-    borderWidth: 2,
-    borderColor: '#fff',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  legendText: { fontSize: 11, color: NAMI_DARK, flexShrink: 1, fontWeight: '600' },
-  barChartContainer: { alignItems: "center", paddingVertical: 10 },
-  chartSubtext: { 
-    fontSize: 13, 
-    color: NAMI_ACCENT, 
-    marginTop: 15, 
-    textAlign: "center",
-    fontWeight: '700',
-  },
-  progressContainer: { marginTop: 5 },
-  progressItem: { marginBottom: 24 },
-  progressHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8 },
-  progressLabel: { fontSize: 14, fontWeight: "700", color: NAMI_DARK },
-  progressValue: { fontSize: 12, color: NAMI_ACCENT, fontWeight: '700' },
-  progressBarBg: { 
-    height: 12, 
-    backgroundColor: "#FFF4E6", 
-    borderRadius: 6, 
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: '#FFE8D6',
-  },
-  progressBarFill: { 
-    height: "100%", 
-    borderRadius: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-  },
-  progressPercent: { 
-    fontSize: 11, 
-    marginTop: 6,
-    fontWeight: '700',
-  },
-  quoteSection: {
-    backgroundColor: '#FFE8D6',
-    margin: 15,
-    marginTop: 5,
-    padding: 20,
-    borderRadius: 20,
-    borderLeftWidth: 5,
-    borderLeftColor: NAMI_PRIMARY,
-    alignItems: 'center',
-  },
-  quoteText: {
-    fontSize: 16,
-    color: NAMI_DARK,
-    fontStyle: 'italic',
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  quoteAuthor: {
-    fontSize: 12,
-    color: NAMI_ACCENT,
-    fontWeight: '700',
-  },
+  container: { flex: 1, backgroundColor: COLORS.bg },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bg },
+  header: { backgroundColor: COLORS.primary, padding: 20, paddingTop: 56, paddingBottom: 24, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, ...cardShadow },
+  title: { fontSize: 28, fontWeight: '900', color: '#fff' },
+  subtitle: { color: COLORS.cream, fontStyle: 'italic', marginTop: 2, marginBottom: 14 },
+  headerButtons: { flexDirection: 'row', gap: 8 },
+  hBtn: { flex: 1, flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.25)', borderWidth: 2, borderColor: '#fff', borderRadius: 20, paddingVertical: 9 },
+  hBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  cards: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', padding: 16, paddingBottom: 0 },
+  card: { width: '48%', borderRadius: 20, padding: 16, marginBottom: 14, ...cardShadow },
+  iconCircle: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  cardLabel: { fontSize: 11, color: COLORS.navy, fontWeight: '700', textTransform: 'uppercase', opacity: 0.75 },
+  cardValue: { fontSize: 19, fontWeight: '900', color: COLORS.navy, marginTop: 4 },
+  section: { backgroundColor: '#fff', margin: 16, marginBottom: 0, padding: 20, borderRadius: 20, borderWidth: 2, borderColor: COLORS.cream, ...cardShadow },
+  sectionTitle: { fontSize: 18, fontWeight: '800', color: COLORS.primary },
+  sectionSub: { fontSize: 12, color: COLORS.muted, fontStyle: 'italic', marginTop: 2 },
+  noData: { textAlign: 'center', color: COLORS.muted, fontStyle: 'italic', paddingVertical: 24 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 16, gap: 10 },
+  legendItem: { flexDirection: 'row', alignItems: 'center' },
+  dot: { width: 12, height: 12, borderRadius: 6, marginRight: 6 },
+  legendText: { fontSize: 11, color: COLORS.navy, fontWeight: '600' },
+  avg: { textAlign: 'center', color: COLORS.accent, fontWeight: '700', fontSize: 12, marginTop: 12 },
+  barTop: { fontSize: 8, color: COLORS.accent, fontWeight: '700' },
+  cta: { backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 22, marginTop: 6 },
+  ctaText: { color: '#fff', fontWeight: '800' },
+  quote: { backgroundColor: '#FFE8D6', margin: 16, padding: 18, borderRadius: 20, borderLeftWidth: 5, borderLeftColor: COLORS.primary, alignItems: 'center' },
+  quoteText: { fontSize: 15, color: COLORS.navy, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' },
+  quoteBy: { fontSize: 12, color: COLORS.accent, fontWeight: '700', marginTop: 6 },
 });

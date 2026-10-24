@@ -1,97 +1,87 @@
-import { useState } from "react";
-import { Text, View, TouchableOpacity, StyleSheet, Alert } from "react-native";
-import * as Clipboard from "expo-clipboard";
-import { Ionicons } from "@expo/vector-icons";
+import React, { useState } from 'react';
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
+import { COLORS } from '@/constants/theme';
+import { evaluate } from '@/utils/calc';
 
+const ROWS = [
+  ['C', '(', ')', '÷'],
+  ['7', '8', '9', '×'],
+  ['4', '5', '6', '-'],
+  ['1', '2', '3', '+'],
+  ['0', '.', '⌫', '='],
+];
+const OPS = ['+', '-', '×', '÷'];
+
+// The calculator is fully independent: it never reads or writes budget data.
 export default function Calculator() {
-  const [input, setInput] = useState("");
-  const [result, setResult] = useState("");
+  const [input, setInput] = useState('');
+  const [result, setResult] = useState('');
+  const [justEvaluated, setJustEvaluated] = useState(false);
 
-  const handlePress = (value: string) => {
-    if (value === "C") {
-      setInput("");
-      setResult("");
-    } else if (value === "⌫") {
-      setInput((prev) => prev.slice(0, -1)); // remove last character
-    } else if (value === "=") {
+  const press = (v: string) => {
+    if (v === 'C') { setInput(''); setResult(''); setJustEvaluated(false); return; }
+    if (v === '⌫') { setInput((p) => p.slice(0, -1)); setJustEvaluated(false); return; }
+    if (v === '=') {
+      if (!input) return;
       try {
-        const evalResult = eval(input.replace("×", "*").replace("÷", "/"));
-        setResult(evalResult.toString());
-      } catch {
-        Alert.alert("Error", "Invalid Expression");
+        setResult(String(evaluate(input)));
+        setJustEvaluated(true);
+      } catch (e) {
+        Alert.alert('Error', e instanceof Error ? e.message : 'Invalid expression');
       }
-    } else {
-      setInput(input + value);
+      return;
     }
+    const isOp = OPS.includes(v);
+    // After "=", an operator continues from the result; anything else starts fresh.
+    let base = input;
+    if (justEvaluated) {
+      base = isOp && result ? result : '';
+      setJustEvaluated(false);
+    }
+    if (isOp) {
+      if (base === '' && v !== '-') return; // can't start with × ÷ +
+      if (OPS.includes(base.slice(-1))) { setInput(base.slice(0, -1) + v); return; } // replace operator
+    }
+    setInput(base + v);
   };
 
-  const copyToClipboard = async () => {
-    if (result) {
-      await Clipboard.setStringAsync(result);
-    } else {
-      Alert.alert("No result to copy");
-    }
+  const copy = async () => {
+    if (!result) return Alert.alert('Nothing to copy', 'Calculate something first.');
+    await Clipboard.setStringAsync(result);
   };
-
-  const buttons = [
-    ["7", "8", "9", "÷"],
-    ["4", "5", "6", "×"],
-    ["1", "2", "3", "-"],
-    ["0", ".", "⌫", "+"],
-    ["C", "="],
-  ];
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>🧮 Calculator</Text>
-
       <View style={styles.display}>
-        <Text style={styles.input} numberOfLines={1} adjustsFontSizeToFit>
-          {input || "0"}
-        </Text>
-
-        <View style={styles.resultContainer}>
-          {result ? (
+        <Text style={styles.input} numberOfLines={1} adjustsFontSizeToFit>{input || '0'}</Text>
+        <View style={styles.resultRow}>
+          {!!result && (
             <>
-              <Text
-                style={styles.result}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                = {result}
-              </Text>
-              <TouchableOpacity onPress={copyToClipboard} style={styles.clipboardIcon}>
-                <Ionicons name="clipboard-outline" size={22} color="#cc6c0cff" />
+              <Text style={styles.result} numberOfLines={1} adjustsFontSizeToFit>= {result}</Text>
+              <TouchableOpacity onPress={copy} hitSlop={8}>
+                <Ionicons name="clipboard-outline" size={22} color={COLORS.accent} />
               </TouchableOpacity>
             </>
-          ) : null}
+          )}
         </View>
       </View>
-
-      {buttons.map((row, rowIndex) => (
-        <View key={rowIndex} style={styles.row}>
-          {row.map((btn) => (
-            <TouchableOpacity
-              key={btn}
-              style={[
-                styles.button,
-                btn === "=" && styles.equalButton,
-                btn === "C" && styles.clearButton,
-              ]}
-              onPress={() => handlePress(btn)}
-            >
-              <Text
-                style={[
-                  styles.buttonText,
-                  (btn === "=" || btn === "C") && styles.whiteText,
-                ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
+      {ROWS.map((row, i) => (
+        <View key={i} style={styles.row}>
+          {row.map((b) => {
+            const op = OPS.includes(b);
+            return (
+              <TouchableOpacity
+                key={b}
+                style={[styles.btn, op && styles.opBtn, b === '=' && styles.eqBtn, b === 'C' && styles.clearBtn]}
+                onPress={() => press(b)}
+                activeOpacity={0.7}
               >
-                {btn}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text style={[styles.btnText, (op || b === '=' || b === 'C') && { color: '#fff' }]}>{b}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       ))}
     </View>
@@ -99,79 +89,15 @@ export default function Calculator() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fef8f4",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 10,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#cc6c0cff",
-    marginBottom: 10,
-  },
-  display: {
-    width: "90%",
-    backgroundColor: "#fff",
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 15,
-    alignItems: "flex-end",
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: "#e6e6e6",
-  },
-  input: {
-    fontSize: 24,
-    color: "#333",
-    alignSelf: "flex-end",
-  },
-  resultContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 3,
-    alignSelf: "flex-end",
-  },
-  result: {
-    fontSize: 18,
-    color: "#cc6c0cff",
-    fontWeight: "600",
-  },
-  clipboardIcon: {
-    marginLeft: 8,
-  },
-  row: {
-    flexDirection: "row",
-    marginVertical: 3,
-  },
-  button: {
-    backgroundColor: "#fff",
-    width: 60,
-    height: 60,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    margin: 4,
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  equalButton: {
-    backgroundColor: "#cc6c0cff",
-  },
-  clearButton: {
-    backgroundColor: "#e67e22",
-  },
-  whiteText: {
-    color: "white",
-  },
-  buttonText: {
-    fontSize: 20,
-    color: "#333",
-    fontWeight: "600",
-  },
+  container: { flex: 1, backgroundColor: COLORS.bg, padding: 16, justifyContent: 'flex-end' },
+  display: { backgroundColor: '#fff', borderRadius: 20, padding: 20, marginBottom: 16, minHeight: 130, justifyContent: 'space-between', borderWidth: 2, borderColor: COLORS.cream },
+  input: { fontSize: 38, fontWeight: '700', color: COLORS.navy, textAlign: 'right' },
+  resultRow: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10, minHeight: 32 },
+  result: { fontSize: 26, color: COLORS.accent, fontWeight: '800', flexShrink: 1 },
+  row: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  btn: { flex: 1, aspectRatio: 1.25, borderRadius: 18, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: COLORS.border },
+  opBtn: { backgroundColor: COLORS.blue, borderColor: COLORS.blue },
+  eqBtn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  clearBtn: { backgroundColor: COLORS.danger, borderColor: COLORS.danger },
+  btnText: { fontSize: 26, fontWeight: '700', color: COLORS.navy },
 });
