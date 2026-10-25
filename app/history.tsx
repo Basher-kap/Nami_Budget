@@ -8,9 +8,15 @@ import { formatDate, peso } from '@/utils/format';
 
 type Tab = 'expense' | 'deposit';
 
-function Cell({ children, flex, style }: { children: React.ReactNode; flex: number; style?: object }) {
+/** Text columns wrap onto extra lines; the amount column stays on one line (shrinking slightly if needed). */
+function Cell({ children, flex, style, singleLine }: { children: React.ReactNode; flex: number; style?: object; singleLine?: boolean }) {
   return (
-    <Text style={[styles.cell, { flex }, style]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>{children}</Text>
+    <Text
+      style={[styles.cell, { flex }, style]}
+      {...(singleLine ? { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.75 } : {})}
+    >
+      {children}
+    </Text>
   );
 }
 
@@ -27,19 +33,19 @@ export default function History() {
 
   const header = (
     <View style={[styles.row, styles.headerRow]}>
-      <Cell flex={1.5} style={styles.headerCell}>Wallet Name</Cell>
-      {isExp && <Cell flex={1.5} style={styles.headerCell}>Expense</Cell>}
-      <Cell flex={1.1} style={styles.headerCell}>Amount</Cell>
-      <Cell flex={1.3} style={styles.headerCell}>Date</Cell>
+      <Cell flex={1.4} style={styles.headerCell}>Wallet Name</Cell>
+      {isExp && <Cell flex={2} style={styles.headerCell}>Expense</Cell>}
+      <Cell flex={1.2} style={styles.headerCell}>Amount</Cell>
+      <Cell flex={1.2} style={styles.headerCell}>Date</Cell>
     </View>
   );
 
   const renderItem = ({ item, index }: { item: Transaction; index: number }) => (
     <View style={[styles.row, index % 2 === 1 && styles.zebra]}>
-      <Cell flex={1.5}>{item.walletName}</Cell>
-      {isExp && <Cell flex={1.5}>{item.description}</Cell>}
-      <Cell flex={1.1} style={{ color: isExp ? COLORS.danger : COLORS.success, fontWeight: '700' }}>{peso(item.amount)}</Cell>
-      <Cell flex={1.3}>{formatDate(item.date)}</Cell>
+      <Cell flex={1.4}>{item.walletName}</Cell>
+      {isExp && <Cell flex={2}>{item.description}</Cell>}
+      <Cell flex={1.2} singleLine style={{ color: isExp ? COLORS.danger : COLORS.success, fontWeight: '700' }}>{peso(item.amount)}</Cell>
+      <Cell flex={1.2}>{formatDate(item.date)}</Cell>
     </View>
   );
 
@@ -73,10 +79,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg, padding: 16 },
   summary: { color: COLORS.navy, fontWeight: '600', marginVertical: 12, textAlign: 'center' },
   table: { backgroundColor: '#fff', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border },
-  row: { flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border, backgroundColor: '#fff' },
+  row: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 12, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border, backgroundColor: '#fff' },
   zebra: { backgroundColor: COLORS.bg },
   headerRow: { backgroundColor: COLORS.primary, borderBottomWidth: 0 },
   headerCell: { color: '#fff', fontWeight: '800' },
-  cell: { fontSize: 13, color: COLORS.navy, paddingHorizontal: 4 },
+  cell: { fontSize: 13, lineHeight: 18, color: COLORS.navy, paddingHorizontal: 4 },
   empty: { textAlign: 'center', color: COLORS.muted, fontStyle: 'italic', padding: 30 },
 });
