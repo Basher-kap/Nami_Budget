@@ -72,7 +72,6 @@ export function DailySpendingChart({ data }: { data: DayPoint[] }) {
   return (
     <View>
       <View style={styles.toolbar}>
-        {/* <Text style={styles.axisInfo}>Y-axis every {peso(step).replace('.00', '')}</Text> */}
         <View style={styles.zoomRow}>
           <TouchableOpacity onPress={zoomOut} disabled={zoom <= MIN_ZOOM} style={[styles.zBtn, zoom <= MIN_ZOOM && styles.zOff]} accessibilityLabel="Zoom out" hitSlop={6}>
             <Ionicons name="remove" size={18} color="#fff" />
@@ -160,7 +159,6 @@ export function DailySpendingChart({ data }: { data: DayPoint[] }) {
           </View>
         </ScrollView>
       </View>
-      {scrollable}
     </View>
   );
 }

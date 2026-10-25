@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, LayoutChangeEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { COLORS, cardShadow } from '@/constants/theme';
 import { useBudget } from '@/context/BudgetContext';
 import { Branch } from '@/components/TreeView';
@@ -12,7 +11,6 @@ import { peso } from '@/utils/format';
 import { COMPACT_BELOW, MAX_ZOOM, MIN_ZOOM, ZOOM_FACTOR, clampZoom, fitZoom } from '@/utils/treeLayout';
 
 export default function BudgetScreen() {
-  const router = useRouter();
   const { state, ready, deleteWallet } = useBudget();
   const [modal, setModal] = useState<{ mode: ModalMode; nodeId: string | null } | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -70,7 +68,6 @@ export default function BudgetScreen() {
             </View>
 
             <View style={styles.toolbar}>
-              <Text style={styles.zoomHint}>{zoom < COMPACT_BELOW ? 'Overview • zoom in to edit wallets' : 'Zoom the map'}</Text>
               <View style={styles.zoomRow}>
                 <TouchableOpacity onPress={() => setZoom((z) => clampZoom(z / ZOOM_FACTOR))} disabled={zoom <= MIN_ZOOM} style={[styles.zBtn, zoom <= MIN_ZOOM && styles.zOff]} accessibilityLabel="Zoom out" hitSlop={6}>
                   <Ionicons name="remove" size={18} color="#fff" />
@@ -102,10 +99,6 @@ export default function BudgetScreen() {
           </>
         )}
 
-        <TouchableOpacity style={styles.historyBtn} onPress={() => router.push('/history')}>
-          <Ionicons name="receipt" size={18} color="#fff" />
-          <Text style={styles.primaryText}>History Page</Text>
-        </TouchableOpacity>
       </ScrollView>
 
       <NodeActionModal mode={modal?.mode ?? null} nodeId={modal?.nodeId ?? null} onClose={() => setModal(null)} />
@@ -120,7 +113,6 @@ const styles = StyleSheet.create({
   summaryLabel: { fontSize: 11, color: COLORS.muted, fontWeight: '700', textTransform: 'uppercase' },
   summaryValue: { fontSize: 15, fontWeight: '900', color: COLORS.accent, marginTop: 4 },
   toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginHorizontal: 16 },
-  zoomHint: { fontSize: 11, color: COLORS.muted, fontWeight: '600', fontStyle: 'italic' },
   zoomRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   zBtn: { backgroundColor: COLORS.primary, borderRadius: 14, minWidth: 30, height: 28, alignItems: 'center', justifyContent: 'center' },
   zOff: { opacity: 0.35 },
@@ -135,6 +127,5 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: '800', color: COLORS.accent, marginTop: 8 },
   emptyText: { textAlign: 'center', color: COLORS.navy, marginVertical: 12, lineHeight: 20 },
   primaryBtn: { flexDirection: 'row', gap: 8, alignItems: 'center', backgroundColor: COLORS.primary, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 24 },
-  historyBtn: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.blue, marginHorizontal: 20, marginTop: 8, paddingVertical: 14, borderRadius: 24 },
   primaryText: { color: '#fff', fontWeight: '800', fontSize: 15 },
 });
