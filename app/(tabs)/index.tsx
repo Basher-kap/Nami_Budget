@@ -4,20 +4,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { BarChart, LineChart, PieChart } from 'react-native-gifted-charts';
+import { BarChart, PieChart } from 'react-native-gifted-charts';
+import { DailySpendingChart } from '@/components/DailySpendingChart';
 import { CHART_COLORS, COLORS, cardShadow } from '@/constants/theme';
 import { useBudget } from '@/context/BudgetContext';
 import { allocatedOf, childrenOf, getRoot, round2, spentByWallet, totalSpent } from '@/utils/budget';
 import { dayKey, peso, shortDay } from '@/utils/format';
 import { exportToExcel, pickExcel } from '@/utils/files';
 
-// Daily-spending line graph
-const LINE_STEP = 50; // y-axis interval (₱)
-const LINE_MIN_DAYS = 7; // always show at least a week so a single expense still looks like a graph
-const LINE_DAY_SPACING = 44; // px between days
-const LINE_SECTION_H = 38; // px per 50-peso band: the chart grows taller as spending grows
-const LINE_MIN_SECTIONS = 3;
-const LINE_MAX_SECTIONS = 12; // beyond this the step grows in multiples of 50 so the chart stays usable
+const LINE_MIN_DAYS = 7; // daily-spending graph always shows at least a week
 
 export default function Dashboard() {
   const router = useRouter();
@@ -55,7 +50,7 @@ export default function Dashboard() {
   }));
 
   // ---- Line: daily spending, newest day on the LEFT, continuous back to the first expense ----
-  const line = useMemo(() => {
+  const lineData = useMemo(() => {
     const perDay: Record<string, number> = {};
     let earliestMs = Infinity;
     state.transactions.forEach((t) => {
@@ -81,20 +76,7 @@ export default function Dashboard() {
         label: i % 2 === 0 ? (i === 0 ? 'Today' : shortDay(d)) : '', // a label every 2 days
       });
     }
-    const maxVal = Math.max(...data.map((d) => d.value), 0);
-    let step = LINE_STEP;
-    let sections = Math.max(LINE_MIN_SECTIONS, Math.ceil(maxVal / step));
-    if (sections > LINE_MAX_SECTIONS) {
-      // too many 50-peso bands: use the smallest round step (100, 200, 250, 500, 1000…) that fits
-      let mag = 100;
-      step = 0;
-      while (!step) {
-        step = [1, 2, 2.5, 5].map((m) => m * mag).find((s) => Math.ceil(maxVal / s) <= LINE_MAX_SECTIONS) ?? 0;
-        mag *= 10;
-      }
-      sections = Math.ceil(maxVal / step);
-    }
-    return { data, step, sections, days };
+    return data;
   }, [state.transactions]);
   const hasSpending = spent > 0;
 
@@ -216,16 +198,7 @@ export default function Dashboard() {
           <Section title="⚓ Daily Spending" sub="Expenses per day • newest on the left, swipe right for older days">
             {!hasSpending ? <Empty text="No expenses logged yet." /> : (
               <>
-                <LineChart
-                  data={line.data} width={chartWidth} height={line.sections * LINE_SECTION_H}
-                  spacing={LINE_DAY_SPACING} initialSpacing={10} endSpacing={24}
-                  color={COLORS.primary} thickness={3} curved areaChart startFillColor={COLORS.primary} endFillColor={COLORS.cream}
-                  startOpacity={0.4} endOpacity={0.05} dataPointsColor={COLORS.accent} dataPointsRadius={3}
-                  noOfSections={line.sections} maxValue={line.sections * line.step} hideRules yAxisThickness={0} xAxisColor={COLORS.border}
-                  yAxisLabelWidth={44} yAxisTextStyle={{ color: COLORS.primary, fontSize: 9 }}
-                  xAxisLabelTextStyle={{ color: COLORS.muted, fontSize: 9, width: 40, textAlign: 'center' }}
-                  yAxisLabelPrefix="₱"
-                />
+                <DailySpendingChart data={lineData} />
                 <Text style={styles.avg}>Average per day: {peso(spent / Math.max(1, new Set(state.transactions.filter((t) => t.type === 'expense').map((t) => dayKey(new Date(t.date)))).size))} (days with spending)</Text>
               </>
             )}
