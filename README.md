@@ -44,3 +44,14 @@ npm test          # wallet-logic unit tests (Node 22+)
 ```
 Structure: `utils/budget.ts` (pure logic) · `context/BudgetContext.tsx` (state + persistence) ·
 `utils/excel.ts`, `utils/files.ts` (import/export) · `components/` · `app/`.
+
+## Deploy & update
+```
+eas build --platform android --profile preview      # installable APK for testing
+eas build --platform android --profile production   # AAB for Google Play
+eas update --channel preview    --message "what changed"   # JS/asset-only update to preview builds
+eas update --channel production --message "what changed"   # ... to production builds
+```
+- `runtimeVersion` uses the **fingerprint** policy: an update is only delivered to builds whose native code matches.
+  If you add/remove a native package, change the icon/permissions or upgrade the SDK, make a new build instead of an update.
+- Channels: `development`, `preview`, `production` (set in `eas.json`). Builds made before `expo-updates` was added never receive updates.
