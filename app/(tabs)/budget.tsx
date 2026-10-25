@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, LayoutChangeEvent, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { COLORS, cardShadow } from '@/constants/theme';
@@ -9,11 +9,14 @@ import { NodeAction } from '@/components/NodeCard';
 import { ModalMode, NodeActionModal } from '@/components/NodeActionModal';
 import { WalletNode, allocatedOf, availableOf, getRoot, childrenOf } from '@/utils/budget';
 import { peso } from '@/utils/format';
+import { COMPACT_BELOW, MAX_ZOOM, MIN_ZOOM, ZOOM_FACTOR, clampZoom, fitZoom } from '@/utils/treeLayout';
 
 export default function BudgetScreen() {
   const router = useRouter();
   const { state, ready, deleteWallet } = useBudget();
   const [modal, setModal] = useState<{ mode: ModalMode; nodeId: string | null } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [viewW, setViewW] = useState(0);
   const root = getRoot(state);
 
   const onAction = (node: WalletNode, _level: number, a: NodeAction) => {
@@ -66,8 +69,31 @@ export default function BudgetScreen() {
               </View>
             </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.treeScroll}>
-              <Branch node={root} level={0} nodes={state.nodes} onAction={onAction} />
+            <View style={styles.toolbar}>
+              <Text style={styles.zoomHint}>{zoom < COMPACT_BELOW ? 'Overview • zoom in to edit wallets' : 'Zoom the map'}</Text>
+              <View style={styles.zoomRow}>
+                <TouchableOpacity onPress={() => setZoom((z) => clampZoom(z / ZOOM_FACTOR))} disabled={zoom <= MIN_ZOOM} style={[styles.zBtn, zoom <= MIN_ZOOM && styles.zOff]} accessibilityLabel="Zoom out" hitSlop={6}>
+                  <Ionicons name="remove" size={18} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.zoomText}>{Math.round(zoom * 100)}%</Text>
+                <TouchableOpacity onPress={() => setZoom((z) => clampZoom(z * ZOOM_FACTOR))} disabled={zoom >= MAX_ZOOM} style={[styles.zBtn, zoom >= MAX_ZOOM && styles.zOff]} accessibilityLabel="Zoom in" hitSlop={6}>
+                  <Ionicons name="add" size={18} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setZoom(fitZoom(state.nodes, root.id, viewW))} style={[styles.zBtn, styles.fitBtn]} accessibilityLabel="Fit whole map">
+                  <Ionicons name="scan" size={14} color="#fff" />
+                  <Text style={styles.fitText}>Fit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setZoom(1)} hitSlop={6} accessibilityLabel="Reset zoom">
+                  <Text style={styles.resetText}>100%</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <ScrollView
+              horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.treeScroll}
+              onLayout={(e: LayoutChangeEvent) => setViewW(e.nativeEvent.layout.width)}
+            >
+              <Branch node={root} level={0} nodes={state.nodes} scale={zoom} onAction={onAction} />
             </ScrollView>
 
             <Text style={styles.legend}>
@@ -93,6 +119,15 @@ const styles = StyleSheet.create({
   summaryItem: { flex: 1, alignItems: 'center' },
   summaryLabel: { fontSize: 11, color: COLORS.muted, fontWeight: '700', textTransform: 'uppercase' },
   summaryValue: { fontSize: 15, fontWeight: '900', color: COLORS.accent, marginTop: 4 },
+  toolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginHorizontal: 16 },
+  zoomHint: { fontSize: 11, color: COLORS.muted, fontWeight: '600', fontStyle: 'italic' },
+  zoomRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  zBtn: { backgroundColor: COLORS.primary, borderRadius: 14, minWidth: 30, height: 28, alignItems: 'center', justifyContent: 'center' },
+  zOff: { opacity: 0.35 },
+  fitBtn: { flexDirection: 'row', gap: 4, paddingHorizontal: 10, backgroundColor: COLORS.blue },
+  fitText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  zoomText: { minWidth: 42, textAlign: 'center', fontWeight: '800', color: COLORS.navy, fontSize: 12 },
+  resetText: { color: COLORS.accent, fontWeight: '700', fontSize: 11, textDecorationLine: 'underline', paddingHorizontal: 4 },
   treeScroll: { flexGrow: 1, justifyContent: 'center', paddingVertical: 16, paddingHorizontal: 8 },
   legend: { textAlign: 'center', color: COLORS.muted, fontSize: 12, marginBottom: 12 },
   empty: { margin: 20, padding: 24, backgroundColor: '#fff', borderRadius: 22, alignItems: 'center', borderWidth: 2, borderColor: COLORS.cream },
