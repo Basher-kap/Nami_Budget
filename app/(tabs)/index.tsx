@@ -73,7 +73,7 @@ export default function Dashboard() {
       d.setDate(d.getDate() - i); // i = 0 is today (left), larger i = older (right)
       data.push({
         value: round2(perDay[dayKey(d)] ?? 0),
-        label: i % 2 === 0 ? (i === 0 ? 'Today' : shortDay(d)) : '', // a label every 2 days
+        label: i === 0 ? 'Today' : shortDay(d), // the chart shows one every 2+ days, depending on zoom
       });
     }
     return data;
@@ -195,7 +195,7 @@ export default function Dashboard() {
             )}
           </Section>
 
-          <Section title="⚓ Daily Spending" sub="Expenses per day • newest on the left, swipe right for older days">
+          <Section title="⚓ Daily Spending" sub="Expenses per day • newest on the left • zoom with − / + / Fit">
             {!hasSpending ? <Empty text="No expenses logged yet." /> : (
               <>
                 <DailySpendingChart data={lineData} />
