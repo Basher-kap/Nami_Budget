@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { BudgetProvider } from '@/context/BudgetContext';
 import { COLORS } from '@/constants/theme';
+import { UpdateToast } from '@/components/UpdateToast';
 
 export default function RootLayout() {
   return (
@@ -17,6 +18,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="history" options={{ title: 'Transaction History' }} />
       </Stack>
+      <UpdateToast />
     </BudgetProvider>
   );
 }
