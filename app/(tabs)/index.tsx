@@ -195,7 +195,7 @@ export default function Dashboard() {
             )}
           </Section>
 
-          <Section title="⚓ Daily Spending" sub="Expenses per day • newest on the left • zoom with − / + / Fit">
+          <Section title="⚓ Daily Spending" sub="Your spending voyage timeline for days expenses">
             {!hasSpending ? <Empty text="No expenses logged yet." /> : (
               <>
                 <DailySpendingChart data={lineData} />
@@ -204,7 +204,7 @@ export default function Dashboard() {
             )}
           </Section>
 
-          <Section title="⚡ Spending by Wallet" sub="Each cluster is a child wallet; its bars are itself + its sub-wallets">
+          <Section title="⚡ Spending by Wallet" sub="How much each distribution wallet spent">
             {topLevel.length === 0 ? <Empty text="Create wallets to compare spending." /> : (
               <>
                 <ScrollView horizontal showsHorizontalScrollIndicator>
