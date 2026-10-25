@@ -11,7 +11,13 @@ import { allocatedOf, childrenOf, getRoot, round2, spentByWallet, totalSpent } f
 import { dayKey, peso, shortDay } from '@/utils/format';
 import { exportToExcel, pickExcel } from '@/utils/files';
 
-const LINE_DAYS = 30;
+// Daily-spending line graph
+const LINE_STEP = 50; // y-axis interval (₱)
+const LINE_MIN_DAYS = 7; // always show at least a week so a single expense still looks like a graph
+const LINE_DAY_SPACING = 44; // px between days
+const LINE_SECTION_H = 38; // px per 50-peso band: the chart grows taller as spending grows
+const LINE_MIN_SECTIONS = 3;
+const LINE_MAX_SECTIONS = 12; // beyond this the step grows in multiples of 50 so the chart stays usable
 
 export default function Dashboard() {
   const router = useRouter();
@@ -48,25 +54,49 @@ export default function Dashboard() {
     value: s.value, color: s.color, text: total > 0 ? `${Math.round((s.value / total) * 100)}%` : '',
   }));
 
-  // ---- Line: daily spending for the last 30 days ----
-  const lineData = useMemo(() => {
+  // ---- Line: daily spending, newest day on the LEFT, continuous back to the first expense ----
+  const line = useMemo(() => {
     const perDay: Record<string, number> = {};
+    let earliestMs = Infinity;
     state.transactions.forEach((t) => {
-      if (t.type === 'expense') {
-        const k = dayKey(new Date(t.date));
-        perDay[k] = (perDay[k] ?? 0) + t.amount;
-      }
+      if (t.type !== 'expense') return;
+      const d = new Date(t.date);
+      perDay[dayKey(d)] = (perDay[dayKey(d)] ?? 0) + t.amount;
+      earliestMs = Math.min(earliestMs, d.getTime());
     });
-    const out: { value: number; label: string }[] = [];
-    for (let i = LINE_DAYS - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      out.push({ value: round2(perDay[dayKey(d)] ?? 0), label: i % 5 === 0 || i === 0 ? shortDay(d) : '' });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let days = LINE_MIN_DAYS;
+    if (Number.isFinite(earliestMs)) {
+      const first = new Date(earliestMs);
+      first.setHours(0, 0, 0, 0);
+      days = Math.max(days, Math.round((today.getTime() - first.getTime()) / 86_400_000) + 1);
     }
-    return out;
+    const data: { value: number; label: string }[] = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i); // i = 0 is today (left), larger i = older (right)
+      data.push({
+        value: round2(perDay[dayKey(d)] ?? 0),
+        label: i % 2 === 0 ? (i === 0 ? 'Today' : shortDay(d)) : '', // a label every 2 days
+      });
+    }
+    const maxVal = Math.max(...data.map((d) => d.value), 0);
+    let step = LINE_STEP;
+    let sections = Math.max(LINE_MIN_SECTIONS, Math.ceil(maxVal / step));
+    if (sections > LINE_MAX_SECTIONS) {
+      // too many 50-peso bands: use the smallest round step (100, 200, 250, 500, 1000…) that fits
+      let mag = 100;
+      step = 0;
+      while (!step) {
+        step = [1, 2, 2.5, 5].map((m) => m * mag).find((s) => Math.ceil(maxVal / s) <= LINE_MAX_SECTIONS) ?? 0;
+        mag *= 10;
+      }
+      sections = Math.ceil(maxVal / step);
+    }
+    return { data, step, sections, days };
   }, [state.transactions]);
   const hasSpending = spent > 0;
-  const lineMax = Math.max(...lineData.map((d) => d.value), 1);
 
   // ---- Clustered bars: each child wallet = a cluster; its own spending + each sub-wallet ----
   const BAR_W = 22;
@@ -183,15 +213,17 @@ export default function Dashboard() {
             )}
           </Section>
 
-          <Section title="⚓ Daily Spending" sub={`Expenses per day, last ${LINE_DAYS} days`}>
+          <Section title="⚓ Daily Spending" sub="Expenses per day • newest on the left, swipe right for older days">
             {!hasSpending ? <Empty text="No expenses logged yet." /> : (
               <>
                 <LineChart
-                  data={lineData} width={chartWidth} height={190} spacing={Math.max(10, chartWidth / (LINE_DAYS - 1))} initialSpacing={8} endSpacing={8}
+                  data={line.data} width={chartWidth} height={line.sections * LINE_SECTION_H}
+                  spacing={LINE_DAY_SPACING} initialSpacing={10} endSpacing={24}
                   color={COLORS.primary} thickness={3} curved areaChart startFillColor={COLORS.primary} endFillColor={COLORS.cream}
                   startOpacity={0.4} endOpacity={0.05} dataPointsColor={COLORS.accent} dataPointsRadius={3}
-                  noOfSections={4} maxValue={lineMax * 1.15} hideRules yAxisThickness={0} xAxisColor={COLORS.border}
-                  yAxisTextStyle={{ color: COLORS.primary, fontSize: 9 }} xAxisLabelTextStyle={{ color: COLORS.muted, fontSize: 8, width: 36 }}
+                  noOfSections={line.sections} maxValue={line.sections * line.step} hideRules yAxisThickness={0} xAxisColor={COLORS.border}
+                  yAxisLabelWidth={44} yAxisTextStyle={{ color: COLORS.primary, fontSize: 9 }}
+                  xAxisLabelTextStyle={{ color: COLORS.muted, fontSize: 9, width: 40, textAlign: 'center' }}
                   yAxisLabelPrefix="₱"
                 />
                 <Text style={styles.avg}>Average per day: {peso(spent / Math.max(1, new Set(state.transactions.filter((t) => t.type === 'expense').map((t) => dayKey(new Date(t.date)))).size))} (days with spending)</Text>
