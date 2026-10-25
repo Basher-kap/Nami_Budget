@@ -7,7 +7,6 @@ import { MAX_LEVEL, WalletNode } from '@/utils/budget';
 
 export type NodeAction = 'expense' | 'deposit' | 'addWallet' | 'rename' | 'delete';
 
-const TAGS = ['Origin Parent Node', 'Child Node', 'Sub-Child Node'];
 export const CARD_WIDTH = 172;
 
 function Btn({ icon, color, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; color: string; label: string; onPress: () => void }) {
@@ -27,7 +26,6 @@ export function NodeCard({
   const isRoot = level === 0;
   return (
     <View style={[styles.card, isRoot ? styles.root : styles.dashed]}>
-      <Text style={styles.tag}>{TAGS[level]}</Text>
       <Text style={styles.name} numberOfLines={1}>{node.name}</Text>
       <Text style={styles.amount} numberOfLines={1} adjustsFontSizeToFit>{peso(node.amount)}</Text>
       {hasChildren && <Text style={styles.free}>Unallocated {peso(available)}</Text>}
@@ -46,8 +44,7 @@ const styles = StyleSheet.create({
   card: { width: CARD_WIDTH, marginHorizontal: 8, borderRadius: 22, paddingVertical: 10, paddingHorizontal: 10, alignItems: 'center', backgroundColor: '#fff' },
   root: { borderWidth: 2.5, borderColor: COLORS.primary, backgroundColor: COLORS.cream },
   dashed: { borderWidth: 2, borderColor: COLORS.accent, borderStyle: 'dashed' },
-  tag: { fontSize: 10, fontStyle: 'italic', color: COLORS.muted },
-  name: { fontSize: 14, fontWeight: '700', color: COLORS.navy, marginTop: 2, maxWidth: '100%' },
+  name: { fontSize: 14, fontWeight: '700', color: COLORS.navy, maxWidth: '100%' },
   amount: { fontSize: 20, fontWeight: '900', color: COLORS.accent, marginTop: 2, maxWidth: '100%' },
   free: { fontSize: 10, color: COLORS.blue, fontWeight: '600', marginTop: 2 },
   actions: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 8 },
